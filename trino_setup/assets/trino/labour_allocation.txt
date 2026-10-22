@@ -1,0 +1,16 @@
+-- Reporting wrapper. See docs/views.md for prerequisites and security semantics.
+CREATE SCHEMA IF NOT EXISTS reporting_warehouse.{{SHARD_CATALOG}};
+
+CREATE VIEW reporting_warehouse.{{SHARD_CATALOG}}.labor_allocation
+SECURITY DEFINER
+AS
+SELECT
+    CAST(e.client_code AS varchar) AS client_code,
+    '{{PROC_CENTER}}' AS proc_center,
+    CAST(e.category_code AS varchar) AS category_code,
+    CAST(e.category_name AS varchar) AS category_name,
+    CAST(e.code AS varchar) AS code,
+    CAST(e.description AS varchar) AS description,
+    CAST(e.join_key AS varchar) AS join_key
+FROM {{SHARD_CATALOG}}.application.reporting_labor_allocation e
+WHERE e.client_code = split_part(CURRENT_USER, '|', 2);

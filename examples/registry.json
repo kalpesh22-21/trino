@@ -1,0 +1,3 @@
+{"data": [
+  {"env_type":"TEST","mysqldb":"application","name":"online","mysqlhost":"mysql-reader.example.internal","mysqlport":3306,"clientstart":"00000","clientend":"ZZZZZ","used_for":"GR-Node3"}
+]}

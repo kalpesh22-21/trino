@@ -1,0 +1,80 @@
+# Replace example endpoints/image/roles and proc center before applying.
+# Requires precreated MySQL reporting views and a persistent reporting_warehouse
+# view catalog on Trino. This Job creates source catalogs and secured wrappers.
+# Deploy cluster.yaml first; see docs/cluster.md for required secrets.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: trino-catalog-setup
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-catalog-setup
+data:
+  REGISTRY_URL: https://registry.example.internal/registry.json
+  TRINO_URL: https://trino-coordinator:8443
+  TRINO_CA_BUNDLE: /etc/trino-ca/ca.crt
+  VAULT_ADDR: https://vault.example.internal:8200
+  VAULT_KV_MOUNT: secret
+  VAULT_ROLE: trino-catalog-setup
+  TRINO_VAULT_PATH: trino/test/admin
+  SQL_CREDENTIAL_FILE: /run/trino-secrets/mysql.properties
+  MYSQL_SSL_MODE: VERIFY_IDENTITY
+  # REQUIRED: set the proc-center identity for this deployment before applying.
+  TRINO_PROC_CENTER: ""
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: trino-catalog-setup
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800
+  template:
+    spec:
+      serviceAccountName: trino-catalog-setup
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: setup
+          image: registry.example.internal/trino-catalog-setup:0.1.0
+          args: ["apply", "--env-type", "TEST", "--output", "/output/shards.json"]
+          envFrom:
+            - configMapRef:
+                name: trino-catalog-setup
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          volumeMounts:
+            - name: trino-ca
+              mountPath: /etc/trino-ca
+              readOnly: true
+            - name: output
+              mountPath: /output
+      volumes:
+        - name: trino-ca
+          secret:
+            secretName: trino-client-ca
+        - name: output
+          persistentVolumeClaim:
+            claimName: trino-catalog-snapshots
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: trino-catalog-snapshots
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi

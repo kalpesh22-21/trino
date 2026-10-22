@@ -1,0 +1,37 @@
+-- Reporting wrapper. See docs/views.md for prerequisites and security semantics.
+CREATE SCHEMA IF NOT EXISTS reporting_warehouse.{{SHARD_CATALOG}};
+
+CREATE VIEW reporting_warehouse.{{SHARD_CATALOG}}.accrual_balances
+SECURITY DEFINER
+AS
+SELECT
+    CAST(e.client_code AS varchar) AS client_code,
+    '{{PROC_CENTER}}' AS proc_center,
+    CAST(e.employee_code AS varchar) AS employee_code,
+    e.employee_code_num,
+    CAST(e.accrual_status AS varchar) AS accrual_status,
+    CAST(e.accrual_code AS varchar) AS accrual_code,
+    CAST(e.accrual_description AS varchar) AS accrual_description,
+    CAST(e.award_frequency AS varchar) AS award_frequency,
+    e.beginning_balance,
+    e.accrued_amount,
+    e.awarded_amount,
+    e.taken_amount,
+    e.accrual_date,
+    e.accrual_reset_date,
+    e.accrual_anniversary_date,
+    e.next_accrual_date,
+    e.accrual_next_award_date,
+    e.accrual_award_start_date,
+    e.accrual_redeem_start_date,
+    CAST(e.accrual_schedule_type AS varchar) AS accrual_schedule_type
+FROM {{SHARD_CATALOG}}.application.reporting_accrual_balances e
+WHERE e.client_code = split_part(CURRENT_USER, '|', 2)
+  AND EXISTS (
+      SELECT 1
+      FROM {{SHARD_CATALOG}}.application.employee_access a
+      WHERE a.clientcode = split_part(CURRENT_USER, '|', 2)
+        AND a.username = split_part(CURRENT_USER, '|', 3)
+        AND a.clientcode = e.client_code
+        AND a.eecode = e.employee_code
+  );

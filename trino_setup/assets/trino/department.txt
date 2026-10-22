@@ -1,0 +1,13 @@
+-- Reporting wrapper. See docs/views.md for prerequisites and security semantics.
+CREATE SCHEMA IF NOT EXISTS reporting_warehouse.{{SHARD_CATALOG}};
+
+CREATE VIEW reporting_warehouse.{{SHARD_CATALOG}}.department
+SECURITY DEFINER
+AS
+SELECT
+    CAST(e.client_code AS varchar) AS client_code,
+    '{{PROC_CENTER}}' AS proc_center,
+    CAST(e.department_code AS varchar) AS department_code,
+    CAST(e.department_name AS varchar) AS department_name
+FROM {{SHARD_CATALOG}}.application.reporting_department e
+WHERE e.client_code = split_part(CURRENT_USER, '|', 2);

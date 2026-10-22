@@ -1,0 +1,373 @@
+# Configure prerequisites in docs/cluster.md before applying.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: trino
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-vault
+data:
+  VAULT_ADDR: https://vault.example.internal:8200
+  VAULT_KV_MOUNT: secret
+  VAULT_ROLE: trino-sql-reader
+  SQL_VAULT_PATH: trino/test/mysql
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-coordinator
+data:
+  node.properties: |
+    node.environment=cluster
+    node.data-dir=/data/trino
+  password-authenticator.properties: |
+    password-authenticator.name=file
+    file.password-file=/etc/trino/auth/password.db
+  access-control.properties: |
+    access-control.name=file
+    security.config-file=/etc/trino/authorization/rules.json
+  config.properties: |
+    coordinator=true
+    http-server.http.port=8080
+    discovery.uri=http://trino-coordinator:8080
+    catalog.management=dynamic
+    internal-communication.shared-secret=${ENV:TRINO_SHARED_SECRET}
+    node-scheduler.include-coordinator=false
+    catalog.store=file
+    catalog.config-dir=/data/trino/catalog
+    catalog.read-only=false
+    http-server.https.enabled=true
+    http-server.https.port=8443
+    http-server.https.keystore.path=/etc/trino/tls/server.pem
+    http-server.authentication.type=PASSWORD
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-worker
+data:
+  node.properties: |
+    node.environment=cluster
+    node.data-dir=/data/trino
+  config.properties: |
+    coordinator=false
+    http-server.http.port=8080
+    discovery.uri=http://trino-coordinator:8080
+    catalog.management=dynamic
+    internal-communication.shared-secret=${ENV:TRINO_SHARED_SECRET}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino-coordinator
+spec:
+  selector:
+    app: trino
+    component: coordinator
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+  - name: https
+    port: 8443
+    targetPort: https
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: trino-coordinator-data
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino-coordinator
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: &id001
+      app: trino
+      component: coordinator
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      serviceAccountName: trino
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+      initContainers:
+      - name: vault-sql-credentials
+        image: registry.example.internal/trino-catalog-setup:0.1.0
+        args:
+        - credentials
+        - --output
+        - /run/trino-secrets/mysql.properties
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        volumeMounts:
+        - name: sql-credentials
+          mountPath: /run/trino-secrets
+        envFrom:
+        - configMapRef:
+            name: trino-vault
+      containers:
+      - name: trino
+        image: trinodb/trino:483
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: https
+          containerPort: 8443
+        env:
+        - name: TRINO_SHARED_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: trino-internal
+              key: shared-secret
+        resources:
+          requests:
+            cpu: '1'
+            memory: 4Gi
+          limits:
+            cpu: '2'
+            memory: 4Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        startupProbe:
+          httpGet:
+            path: /v1/info
+            port: http
+          periodSeconds: 10
+          failureThreshold: 60
+        readinessProbe:
+          httpGet:
+            path: /v1/info
+            port: http
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /v1/info
+            port: http
+          periodSeconds: 20
+          failureThreshold: 6
+        volumeMounts:
+        - name: config
+          mountPath: /etc/trino/config.properties
+          subPath: config.properties
+          readOnly: true
+        - name: config
+          mountPath: /etc/trino/node.properties
+          subPath: node.properties
+          readOnly: true
+        - name: data
+          mountPath: /data/trino
+        - name: sql-credentials
+          mountPath: /run/trino-secrets
+          readOnly: true
+        - name: config
+          mountPath: /etc/trino/password-authenticator.properties
+          subPath: password-authenticator.properties
+          readOnly: true
+        - name: config
+          mountPath: /etc/trino/access-control.properties
+          subPath: access-control.properties
+          readOnly: true
+        - name: tls
+          mountPath: /etc/trino/tls
+          readOnly: true
+        - name: auth
+          mountPath: /etc/trino/auth
+          readOnly: true
+        - name: authorization
+          mountPath: /etc/trino/authorization
+          readOnly: true
+      volumes:
+      - name: sql-credentials
+        emptyDir:
+          medium: Memory
+          sizeLimit: 1Mi
+      - name: config
+        configMap:
+          name: trino-coordinator
+      - name: data
+        persistentVolumeClaim:
+          claimName: trino-coordinator-data
+      - name: tls
+        secret:
+          secretName: trino-server-tls
+          defaultMode: 288
+      - name: auth
+        secret:
+          secretName: trino-password-auth
+          defaultMode: 288
+      - name: authorization
+        secret:
+          secretName: trino-access-control
+          defaultMode: 288
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: trino
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino-worker
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels: &id001
+      app: trino
+      component: worker
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      serviceAccountName: trino
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+      initContainers:
+      - name: vault-sql-credentials
+        image: registry.example.internal/trino-catalog-setup:0.1.0
+        args:
+        - credentials
+        - --output
+        - /run/trino-secrets/mysql.properties
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        volumeMounts:
+        - name: sql-credentials
+          mountPath: /run/trino-secrets
+        envFrom:
+        - configMapRef:
+            name: trino-vault
+      containers:
+      - name: trino
+        image: trinodb/trino:483
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: TRINO_SHARED_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: trino-internal
+              key: shared-secret
+        resources:
+          requests:
+            cpu: '1'
+            memory: 4Gi
+          limits:
+            cpu: '2'
+            memory: 4Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        startupProbe:
+          httpGet:
+            path: /v1/info
+            port: http
+          periodSeconds: 10
+          failureThreshold: 60
+        readinessProbe:
+          httpGet:
+            path: /v1/info
+            port: http
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /v1/info
+            port: http
+          periodSeconds: 20
+          failureThreshold: 6
+        volumeMounts:
+        - name: config
+          mountPath: /etc/trino/config.properties
+          subPath: config.properties
+          readOnly: true
+        - name: config
+          mountPath: /etc/trino/node.properties
+          subPath: node.properties
+          readOnly: true
+        - name: data
+          mountPath: /data/trino
+        - name: sql-credentials
+          mountPath: /run/trino-secrets
+          readOnly: true
+      volumes:
+      - name: sql-credentials
+        emptyDir:
+          medium: Memory
+          sizeLimit: 1Mi
+      - name: config
+        configMap:
+          name: trino-worker
+      - name: data
+        emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: trino
+              topologyKey: kubernetes.io/hostname

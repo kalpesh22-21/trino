@@ -1,0 +1,93 @@
+-- Reporting wrapper. See docs/views.md for prerequisites and security semantics.
+CREATE SCHEMA IF NOT EXISTS reporting_warehouse.{{SHARD_CATALOG}};
+
+CREATE VIEW reporting_warehouse.{{SHARD_CATALOG}}.expense
+SECURITY DEFINER
+AS
+SELECT
+    CAST(e.client_code AS varchar) AS client_code,
+    '{{PROC_CENTER}}' AS proc_center,
+    e.expense_id,
+    CAST(e.employee_code AS varchar) AS employee_code,
+    e.employee_code_num,
+    CAST(e.comment AS varchar) AS comment,
+    CAST(e.expense_rule AS varchar) AS expense_rule,
+    CAST(e.expense_rule_description AS varchar) AS expense_rule_description,
+    CAST(e.expense_policy AS varchar) AS expense_policy,
+    CAST(e.expense_policy_description AS varchar) AS expense_policy_description,
+    CAST(e.expense_account_code AS varchar) AS expense_account_code,
+    CAST(e.expense_account_description AS varchar) AS expense_account_description,
+    e.amount_requested,
+    e.amount_approved,
+    CAST(e.expense_status AS varchar) AS expense_status,
+    CAST(e.raw_expense_status AS varchar) AS raw_expense_status,
+    CAST(e.raw_is_paid AS integer) AS raw_is_paid,
+    CAST(e.raw_payroll_approved AS integer) AS raw_payroll_approved,
+    CAST(e.raw_transnum AS varchar) AS raw_transnum,
+    CAST(e.raw_payroll_transaction_number AS varchar) AS raw_payroll_transaction_number,
+    CAST(e.data_set_transaction AS varchar) AS data_set_transaction,
+    CAST(e.payroll_transaction_number AS varchar) AS payroll_transaction_number,
+    e.individual_expense_date,
+    e.expense_report_submission_date,
+    e.date_time_submitted,
+    e.approved_date,
+    e.expense_paid_date,
+    CAST(e.expense_country_paid_in AS varchar) AS expense_country_paid_in,
+    e.tied_to_expense_report_on,
+    e.number_of_units,
+    e.rate,
+    CAST(e.number_of_units_rate AS varchar) AS number_of_units_rate,
+    CAST(e.department_code AS varchar) AS department_code,
+    CAST(e.department_description AS varchar) AS department_description,
+    CAST(e.expense_report AS varchar) AS expense_report,
+    CAST(e.final_approved_user AS varchar) AS final_approved_user,
+    CAST(e.expense_created_by AS varchar) AS expense_created_by,
+    CAST(e.submitted_currency AS varchar) AS submitted_currency,
+    CAST(e.exchange_rate AS varchar) AS exchange_rate,
+    CAST(e.missing_receipt_status AS varchar) AS missing_receipt_status,
+    CAST(e.missing_receipt_reason AS varchar) AS missing_receipt_reason,
+    CAST(e.receipt_attached AS varchar) AS receipt_attached,
+    CAST(NULL AS varchar) AS potential_duplicate_expense,
+    CAST(e.expense_type AS varchar) AS expense_type,
+    CAST(e.expense_deduction_code AS varchar) AS expense_deduction_code,
+    CAST(e.auto_decision_detail AS varchar) AS auto_decision_detail,
+    CAST(e.custom_fields AS varchar) AS custom_fields,
+    CAST(e.expense_limit AS varchar) AS expense_limit,
+    CAST(e.system_data_transaction AS varchar) AS system_data_transaction,
+    e.submitted_miles,
+    e.approved_miles,
+    CAST(e.from_location AS varchar) AS from_location,
+    CAST(e.to_location AS varchar) AS to_location,
+    CAST(e.total_trip_time AS varchar) AS total_trip_time,
+    CAST(e.trip_start_time AS varchar) AS trip_start_time,
+    CAST(e.trip_end_time AS varchar) AS trip_end_time,
+    CAST(e.trip_purpose AS varchar) AS trip_purpose,
+    e.commuter_mileage,
+    e.start_odometer_reading,
+    e.end_odometer_reading,
+    CAST(e.stop_location_one AS varchar) AS stop_location_one,
+    CAST(e.stop_location_two AS varchar) AS stop_location_two,
+    CAST(e.stop_location_three AS varchar) AS stop_location_three,
+    e.submitted_kilometers,
+    e.approved_kilometers,
+    CAST(e.corporate_card_transaction_number AS varchar) AS corporate_card_transaction_number,
+    CAST(e.merchant AS varchar) AS merchant,
+    CAST(e.card_number AS varchar) AS card_number,
+    e.purchase_amount,
+    e.purchase_date,
+    e.post_date,
+    e.import_date,
+    e.card_limit,
+    e.card_issue_date,
+    e.card_expiration_date,
+    CAST(e.card_country AS varchar) AS card_country
+FROM {{SHARD_CATALOG}}.application.reporting_expense e
+WHERE e.client_code = split_part(CURRENT_USER, '|', 2)
+  AND EXISTS (
+      SELECT 1
+      FROM {{SHARD_CATALOG}}.application.employee_access a
+      WHERE a.clientcode = split_part(CURRENT_USER, '|', 2)
+        AND a.username = split_part(CURRENT_USER, '|', 3)
+        AND a.clientcode = e.client_code
+        AND a.eecode = e.employee_code
+  );

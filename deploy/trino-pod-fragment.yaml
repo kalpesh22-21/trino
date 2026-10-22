@@ -1,0 +1,38 @@
+# Merge this fragment into BOTH existing coordinator and worker pod specs.
+# Align UID/GID with the existing Trino process (example: 1000).
+# Bind each existing service account to Vault role trino-sql-reader.
+# This is a pod-spec fragment, NOT a standalone kubectl apply resource.
+spec:
+  securityContext:
+    fsGroup: 1000
+  initContainers:
+    - name: vault-sql-credentials
+      image: registry.example.internal/trino-catalog-setup:0.1.0
+      args: ["credentials", "--output", "/run/trino-secrets/mysql.properties"]
+      env:
+        - {name: VAULT_ADDR, value: "https://vault.example.internal:8200"}
+        - {name: VAULT_KV_MOUNT, value: "secret"}
+        - {name: VAULT_ROLE, value: "trino-sql-reader"}
+        - {name: SQL_VAULT_PATH, value: "trino/test/mysql"}
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests: {cpu: 50m, memory: 64Mi}
+        limits: {cpu: 500m, memory: 256Mi}
+      volumeMounts:
+        - {name: sql-credentials, mountPath: /run/trino-secrets}
+  containers:
+    - name: trino # Match the existing container name; retain its other fields.
+      volumeMounts:
+        - {name: sql-credentials, mountPath: /run/trino-secrets, readOnly: true}
+  volumes:
+    - name: sql-credentials
+      emptyDir:
+        medium: Memory
+        sizeLimit: 1Mi

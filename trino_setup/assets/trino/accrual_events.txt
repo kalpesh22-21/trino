@@ -1,0 +1,32 @@
+-- Reporting wrapper. See docs/views.md for prerequisites and security semantics.
+CREATE SCHEMA IF NOT EXISTS reporting_warehouse.{{SHARD_CATALOG}};
+
+CREATE VIEW reporting_warehouse.{{SHARD_CATALOG}}.accrual_events
+SECURITY DEFINER
+AS
+SELECT
+    CAST(e.client_code AS varchar) AS client_code,
+    '{{PROC_CENTER}}' AS proc_center,
+    CAST(e.employee_code AS varchar) AS employee_code,
+    e.employee_code_num,
+    e.request_date,
+    e.hours,
+    CAST(e.earn_code AS varchar) AS earn_code,
+    CAST(e.earn_description AS varchar) AS earn_description,
+    CAST(e.status AS varchar) AS status,
+    CAST(e.event_type AS varchar) AS event_type,
+    e.date_added,
+    CAST(e.comments AS varchar) AS comments,
+    CAST(e.gone_reason AS varchar) AS gone_reason,
+    CAST(e.reason AS varchar) AS reason,
+    CAST(e.accrual_event_department_code AS varchar) AS accrual_event_department_code
+FROM {{SHARD_CATALOG}}.application.reporting_accrual_events e
+WHERE e.client_code = split_part(CURRENT_USER, '|', 2)
+  AND EXISTS (
+      SELECT 1
+      FROM {{SHARD_CATALOG}}.application.employee_access a
+      WHERE a.clientcode = split_part(CURRENT_USER, '|', 2)
+        AND a.username = split_part(CURRENT_USER, '|', 3)
+        AND a.clientcode = e.client_code
+        AND a.eecode = e.employee_code
+  );
